@@ -1,0 +1,226 @@
+SIF INTELLIGENCE
+System Workflow and Architecture Notes for PPT
+
+Project:
+SIF - Serious Injury & Fatality Intelligence
+Tagline:
+Detect risk before it becomes fatal.
+
+Files to use in the PPT:
+1. sif-system-workflow.svg
+2. sif-architecture.svg
+
+============================================================
+1. sif-system-workflow.svg - HOW THE SYSTEM WORKS
+============================================================
+
+This diagram explains the user journey from a worker's first voice report to the final safety action. It is the simple, presentation-friendly view of the product.
+
+STEP 1 - WORKER SPEAKS
+
+A worker is wearing or carrying the AURA safety device. The device is always ready for a voice trigger. The worker does not need to open an app or type anything while working.
+
+Example:
+A worker says: "AURA, something is wrong. The casing line is under pressure and I can smell H2S."
+
+The worker can report in Hindi, Assamese or English. The voice-first approach is important because workers may have gloves on, may be at height, or may not be comfortable typing long written reports.
+
+STEP 2 - VOICE BECOMES DATA
+
+The voice signal is captured by the device and converted into a structured report. The system identifies:
+
+- The spoken language
+- The worker or device ID
+- The site and location
+- The time of the report
+- Important words such as pressure, H2S, harness, height, heat or equipment
+- The urgency of the message
+
+The original voice report and the transcript are both saved for traceability.
+
+STEP 3 - RECORDS ARE MATCHED
+
+The transcript is checked against SIF's existing safety records. The system looks for similar information from:
+
+- Previous incidents at the same location
+- Earlier reports from the same crew or shift
+- Inspection records
+- PPE violations
+- Open corrective actions
+- Toolbox Talk attendance
+- Training and competency records
+- Equipment or pressure anomalies
+
+Example:
+The system finds two pressure anomalies from WH-14 in the last 72 hours and an open gas-testing action. This makes the current voice report more serious than an isolated complaint.
+
+STEP 4 - RISK IS EXPLAINED
+
+SIF combines the new voice signal and historical evidence to produce an explainable risk result. It does not only show a number. It also explains:
+
+- What hazard was detected
+- Which previous records matched
+- Why the risk is increasing
+- What action should happen next
+- Who owns the action
+
+Example result:
+Risk score 94 - Pressure deviation plus H2S exposure. Previous anomalies found at WH-14. Recommended action: move upwind, stop non-essential work, isolate the line and request gas testing.
+
+STEP 5 - PEOPLE ACT
+
+The warning is sent through multiple channels so that the worker does not have to wait for the office:
+
+1. Worker receives a short audio instruction through AURA.
+2. Nearby buddy or crew members receive a relay alert.
+3. Site supervisor receives an intervention task.
+4. Safety Officer receives the event in the Operations Desk.
+5. The event is added to the audit and pattern register.
+
+The worker can immediately stop work, move to a safe area, warn nearby workers or maintain an exclusion zone. The supervisor and Safety Officer can dispatch a site check and close the corrective action.
+
+FEEDBACK LOOP
+
+After the event is handled, the final action is saved back into the safety records. The next Toolbox Talk, training module, site warning or risk calculation can use this new information.
+
+The complete loop is:
+REPORT -> ANALYSE -> WARN -> ACT -> LEARN
+
+============================================================
+2. sif-architecture.svg - HOW THE SYSTEM IS BUILT
+============================================================
+
+This diagram explains the technical and operational architecture behind the workflow. It is the detailed system view for the architecture or solution slide.
+
+LAYER 1 - FIELD SIGNALS
+
+Inputs come from the people and tools already used at industrial sites:
+
+- AURA wearable voice report
+- Radio communication
+- QR-based task or PPE guides
+- SMS and WhatsApp alerts
+- Daily Toolbox Talk observations
+- Inspection and incident forms
+
+The wearable is the main real-time input because it allows hands-free reporting from remote or high-risk areas.
+
+LAYER 2 - UNDERSTAND
+
+The Speech Gateway receives the voice report and prepares it for analysis:
+
+- Speech-to-text conversion
+- Hindi, Assamese and English language support
+- Noise cleanup
+- Language detection
+- Worker/device identification
+- Site and timestamp capture
+- Consent and traceability metadata
+
+The NLP Hazard Extraction layer then identifies safety entities and intent:
+
+- H2S or gas smell
+- Pressure change
+- Fall or height work
+- Missing or damaged PPE
+- Heat, fatigue or dehydration
+- Rotating equipment
+- Confined-space danger
+- Request for help or stop-work
+
+LAYER 3 - EVIDENCE AND DECISION
+
+The Safety Records Store contains the organization's safety memory:
+
+- Historical incidents
+- Near-misses
+- Inspection results
+- Crew and shift patterns
+- PPE compliance
+- Training and certification
+- Toolbox Talk attendance
+- Site zones and hazard rules
+- Open corrective actions
+
+The Context Matcher searches this history using site, crew, shift, equipment, hazard type and time. It identifies whether the new report is a one-off event or part of a repeated pattern.
+
+The SIF Risk and Action Engine combines the new signal with matched records. It produces:
+
+- Risk score
+- Risk tier such as Low, Moderate, High or Critical
+- Evidence behind the score
+- Recommended immediate action
+- Action owner
+- Escalation path
+
+This is designed as an explainable system. The Safety Officer should be able to understand why a warning was generated.
+
+LAYER 4 - RESPONSE LOOP
+
+The result goes to the people who can act:
+
+WORKER:
+Receives private audio guidance through AURA. Can stop work, move away, report more information or confirm that the area is safe.
+
+BUDDY / NEARBY CREW:
+Receives a relay message and can warn other workers, create an exclusion zone or support the worker.
+
+SITE SUPERVISOR:
+Receives the task to stop work, dispatch a site check, isolate equipment, arrange gas testing or verify PPE.
+
+SAFETY OFFICER / OPERATIONS DESK:
+Suresh receives the escalated event, matched history, risk score, action status and audit trail. The desk can monitor patterns across sites and update training or management reports.
+
+============================================================
+3. TEAM ROLES FOR THE DEMO
+============================================================
+
+Suresh - Safety Officer / Operations Desk owner
+Responsible for reviewing escalated alerts, confirming risk, assigning actions and updating management records.
+
+Divya - Site Supervisor
+Responsible for field intervention, stop-work instructions, site verification and corrective action closure.
+
+Darshna - Field Relay
+Helps pass the alert to nearby workers and coordinates the buddy or crew response.
+
+Saniya - Worker Relay
+Represents the worker-side communication path and confirms that the field warning reached the crew.
+
+Worker / Ground Crew
+Reports unusual conditions through AURA, follows the audio instruction, warns nearby workers and confirms the safe state.
+
+============================================================
+4. RECOMMENDED PPT DEMO STORY
+============================================================
+
+1. Show the worker wearing the AURA device at a drilling or maintenance site.
+2. Worker says: "AURA, platform hil raha hai aur casing line ke paas pressure badh raha hai. H2S smell bhi aa rahi hai."
+3. SIF converts the voice into a transcript.
+4. NLP identifies pressure deviation and H2S exposure.
+5. The system finds two previous pressure anomalies at WH-14 and a pending gas test.
+6. SIF produces a critical risk score of 94.
+7. AURA replies with the worker instruction: move upwind, stop non-essential work, isolate the line and request gas testing.
+8. Nearby crew receives a relay alert.
+9. Divya receives the site intervention task.
+10. Darshna and Saniya represent the field communication path.
+11. Suresh sees the matched records and action status in the Operations Desk.
+12. The event is saved and used for the next Toolbox Talk, training update and management risk register.
+
+============================================================
+5. WHAT TO SAY ABOUT THE PROTOTYPE
+============================================================
+
+This is a working prototype of the user experience and decision flow. The current demo simulates the speech recognition fallback and historical record matching so that the complete journey can be shown without a production backend.
+
+In the production version, the system would connect to:
+
+- A secure speech-to-text service
+- An NLP and entity extraction service
+- A central safety database
+- Identity and role-based access control
+- Push, SMS, WhatsApp and radio integrations
+- An auditable notification and action service
+- Site-level offline synchronization for remote locations
+
+The main value of SIF is not just detecting an incident after it happens. It connects a worker's early warning with historical evidence and gives people a specific safety action before the situation becomes a serious injury or fatality.

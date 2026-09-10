@@ -1,0 +1,10 @@
+{
+  "description": "Empowering safety officers, this industrial safety dashboard analyzes incident reports and detects precursor patterns to prevent serious injuries and fatalities.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
