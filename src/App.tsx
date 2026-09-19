@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { LoginScreen, type UserRole, type UserSession } from "./auth/LoginScreen";
 
 type Tab = "home" | "analyzer" | "overview" | "alerts" | "worker" | "desk" | "blueprint";
 type PPEKey = "helmet" | "gloves" | "harness" | "shoes";
@@ -9,6 +10,104 @@ type VoiceMatch = {
   action: string;
   risk: number;
 };
+type SafetyRecord = {
+  id: string;
+  createdAt: string;
+  userName: string;
+  employeeId: string;
+  department: string;
+  role: UserRole;
+  source: "voice" | "nlp";
+  transcript: string;
+  hazard: string;
+  risk: number;
+  action: string;
+};
+
+const RECORDS_KEY = "sif-safety-records";
+const USER_SESSION_LOG_KEY = "sif-user-session-log";
+const ACTIVE_USER_KEY = "sif-active-user";
+
+type UserSessionLog = {
+  loginAt: string;
+  userName: string;
+  employeeId: string;
+  department: string;
+  role: UserRole;
+  email?: string;
+  sessionId: string;
+};
+
+const ROLE_LOGIN_CSV_KEYS: Record<UserRole, string> = {
+  worker: "sif-worker-logins.csv",
+  supervisor: "sif-supervisor-logins.csv",
+  admin: "sif-admin-logins.csv",
+};
+
+function saveSafetyRecord(record: SafetyRecord) {
+  const existing = JSON.parse(localStorage.getItem(RECORDS_KEY) ?? "[]") as SafetyRecord[];
+  localStorage.setItem(RECORDS_KEY, JSON.stringify([record, ...existing].slice(0, 500)));
+}
+
+function appendUserSessionLog(user: UserSession) {
+  const rows = JSON.parse(localStorage.getItem(USER_SESSION_LOG_KEY) ?? "[]") as UserSessionLog[];
+  const sessionId = `session-${Date.now()}-${user.employeeId}`;
+  const row: UserSessionLog = {
+    loginAt: new Date().toISOString(),
+    userName: user.name,
+    employeeId: user.employeeId,
+    department: user.department,
+    role: user.role,
+    email: user.email,
+    sessionId,
+  };
+  localStorage.setItem(USER_SESSION_LOG_KEY, JSON.stringify([row, ...rows].slice(0, 250)));
+  localStorage.setItem(ACTIVE_USER_KEY, JSON.stringify({ ...user, sessionId }));
+
+  const userCsvRows = [
+    ["loginAt", "userName", "employeeId", "department", "role", "email", "sessionId"],
+    [row.loginAt, row.userName, row.employeeId, row.department, row.role, row.email ?? "", row.sessionId],
+  ];
+  const csv = userCsvRows.map((rowValues) => rowValues.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  localStorage.setItem(`sif-user-${user.employeeId.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.csv`, csv);
+  const roleCsvKey = ROLE_LOGIN_CSV_KEYS[user.role];
+  const roleCsv = JSON.parse(localStorage.getItem(roleCsvKey) ?? "[]") as UserSessionLog[];
+  const roleRows = [
+    ["loginAt", "userName", "employeeId", "department", "role", "email", "sessionId"],
+    ...[row, ...roleCsv].slice(0, 250).map((item) => [item.loginAt, item.userName, item.employeeId, item.department, item.role, item.email ?? "", item.sessionId]),
+  ];
+  localStorage.setItem(roleCsvKey, roleRows.map((rowValues) => rowValues.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(",")).join("\n"));
+  return sessionId;
+}
+
+function exportUserCsv(user: UserSession) {
+  const records = JSON.parse(localStorage.getItem(RECORDS_KEY) ?? "[]") as SafetyRecord[];
+  const userRecords = records.filter((record) => record.employeeId === user.employeeId && record.role === user.role);
+  const columns = ["id", "createdAt", "userName", "employeeId", "department", "role", "source", "transcript", "hazard", "risk", "action"] as const;
+  const csv = [columns.join(","), ...userRecords.map((record) => columns.map((column) => `"${String(record[column] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+  const blob = new Blob([csv || columns.join(",")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `sif-${user.role}-${user.employeeId.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function downloadSafetyCsv() {
+  const records = JSON.parse(localStorage.getItem(RECORDS_KEY) ?? "[]") as SafetyRecord[];
+  const columns = ["id", "createdAt", "userName", "employeeId", "department", "role", "source", "transcript", "hazard", "risk", "action"] as const;
+  const csv = [columns.join(","), ...records.map((record) => columns.map((column) => `"${String(record[column] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "sif-safety-records.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 // ─── palette helpers ──────────────────────────────────────────────────────────
 const C = {
@@ -406,7 +505,7 @@ function Slider({ label, value, min, max, unit, onChange }: {
 
 // ─── Screen 1: Incident Analyzer ─────────────────────────────────────────────
 
-function IncidentAnalyzer() {
+function IncidentAnalyzer({ user, onSave }: { user: UserSession; onSave(record: Omit<SafetyRecord, "id" | "createdAt">): void }) {
   const [report, setReport] = useState(
     "Worker fell from scaffold platform at wellhead WH-14 during casing change-out. Estimated height 35 ft. No harness worn. Four crew members present. Similar incident at WH-11 reported 3 weeks prior — same crew, same shift supervisor."
   );
@@ -564,6 +663,7 @@ function IncidentAnalyzer() {
             </div>
           </div>
           <p style={{ color: "#3F5D65", fontSize: 12, lineHeight: 1.7 }}>{action}</p>
+          <button onClick={() => onSave({ userName: user.name, employeeId: user.employeeId, department: user.department, role: user.role, source: "nlp", transcript: report, hazard: `${injuryType} incident · ${environment}`, risk: score, action })} style={{ padding: "8px 12px", color: "#FFFFFF", border: 0, background: C.blue, cursor: "pointer", font: "9px 'IBM Plex Mono', monospace", letterSpacing: "0.08em" }}>SAVE NLP REPORT TO RECORDS</button>
         </div>
       </div>
     </div>
@@ -732,6 +832,7 @@ function NetworkOverview() {
 
 function AlertsFeed() {
   const [filter, setFilter] = useState<"all" | "critical" | "high" | "medium">("all");
+  const [selectedAlert, setSelectedAlert] = useState<(typeof ALERTS)[number] | null>(null);
   const visible = ALERTS.filter((a) => filter === "all" || a.priority === filter);
 
   return (
@@ -764,6 +865,19 @@ function AlertsFeed() {
         })}
         <Mono size={9} color={C.muted} ><span style={{ marginLeft: "auto" }}>{visible.length} alert{visible.length !== 1 ? "s" : ""}</span></Mono>
       </div>
+
+      {selectedAlert && (
+        <div style={{ margin: 14, marginBottom: 0, padding: 16, border: `1px solid ${priorityColor(selectedAlert.priority)}60`, borderLeft: `4px solid ${priorityColor(selectedAlert.priority)}`, background: C.panel2 }}>
+          <button onClick={() => setSelectedAlert(null)} style={{ padding: 0, border: 0, background: "transparent", color: C.blue, cursor: "pointer", font: "9px 'IBM Plex Mono', monospace", letterSpacing: "0.1em" }}>← BACK TO ALERTS</button>
+          <Mono size={9} color={priorityColor(selectedAlert.priority)}>{selectedAlert.site} · {selectedAlert.priority.toUpperCase()} PRIORITY</Mono>
+          <div style={{ margin: "7px 0", color: C.text, font: "700 21px/1.1 'Barlow Condensed', sans-serif", textTransform: "uppercase" }}>{selectedAlert.title}</div>
+          <p style={{ margin: "0 0 12px", color: C.dim, fontSize: 12, lineHeight: 1.6 }}>{selectedAlert.pattern}</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            <button onClick={() => setSelectedAlert(null)} style={{ padding: "8px 11px", color: C.red, border: `1px solid ${C.red}55`, background: `${C.red}0C`, cursor: "pointer", font: "9px 'IBM Plex Mono', monospace" }}>ASSIGN SITE CHECK →</button>
+            <button onClick={() => setSelectedAlert(null)} style={{ padding: "8px 11px", color: C.green, border: `1px solid ${C.green}55`, background: `${C.green}0C`, cursor: "pointer", font: "9px 'IBM Plex Mono', monospace" }}>MARK REVIEWED ✓</button>
+          </div>
+        </div>
+      )}
 
       {/* list */}
       <div style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -812,7 +926,7 @@ function AlertsFeed() {
                 }}>
                   {alert.tag}
                 </div>
-                <button style={{
+                <button onClick={() => setSelectedAlert(alert)} style={{
                   fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: "0.1em",
                   color: col, border: `1px solid ${col}40`, background: `${col}0C`,
                   padding: "3px 12px", cursor: "pointer", transition: "all 0.15s",
@@ -1060,6 +1174,12 @@ function DashboardHome({ onSelect }: { onSelect(tab: Tab): void }) {
     <div className="home-view">
       <div className="home-hero"><div><Mono size={9} color={C.orange}>SIF INTELLIGENCE · OIL INDIA LIMITED</Mono><h1>Safety operations dashboard</h1><p>Detect risk before it becomes fatal. Choose a workflow to move from field signal to accountable action.</p></div><div className="home-live"><span /> SYSTEM ONLINE<strong>11 ACTIVE ALERTS</strong><small>Last scan · 2 min ago</small></div></div>
       <div className="home-kpis"><KPI label="Reports scanned today" value="247" trend="+18 vs yesterday" dir="up" accent={C.blue} /><KPI label="Critical patterns" value="3" trend="2 need action now" dir="up" accent={C.red} /><KPI label="Avg detection time" value="4.2" unit="min" trend="−1.1 min vs last week" dir="down" accent={C.green} /><KPI label="Model accuracy" value="94.7" unit="%" trend="Stable ±0.3%" dir="flat" accent={C.orange} /></div>
+      <div className="home-guide">
+        <div className="home-guide__intro"><SectionHead label="Start here" accent={C.orange} /><strong>Safety ka simple flow</strong><span>Signal dekho, risk samjho, action assign karo.</span></div>
+        <button onClick={() => onSelect("alerts")}><b>01</b><span><strong>Sabse pehle risk dekho</strong><small>3 critical patterns waiting</small></span><em>→</em></button>
+        <button onClick={() => onSelect("analyzer")}><b>02</b><span><strong>Report ko check karo</strong><small>Risk score aur reason milega</small></span><em>→</em></button>
+        <button onClick={() => onSelect("desk")}><b>03</b><span><strong>Action owner ko bhejo</strong><small>Site check dispatch karo</small></span><em>→</em></button>
+      </div>
       <div className="home-section-head"><div><SectionHead label="Choose a workflow" accent={C.orange} /><h2>What do you need to do?</h2></div><Mono size={9} color={C.muted}>LIVE OPERATIONS · 10 SEP 2026</Mono></div>
       <div className="home-modules">{modules.map((module) => <button className="home-module" key={module.tab} onClick={() => onSelect(module.tab)} style={{ borderTopColor: module.accent }}><div className="home-module__top"><span style={{ color: module.accent }}>{module.icon}</span><Mono size={9} color={module.accent}>{module.status}</Mono></div><strong>{module.title}</strong><p>{module.copy}</p><span className="home-module__open">OPEN MODULE <b>→</b></span></button>)}</div>
       <div className="field-program">
@@ -1072,6 +1192,103 @@ function DashboardHome({ onSelect }: { onSelect(tab: Tab): void }) {
         {programView === "roadmap" && <div className="program-panel"><div className="roadmap-track">{[["01", "Foundation", "Month 1", "Policy, committee, training material"], ["02", "Awareness", "Months 2–3", "Induction, signage, digital groups"], ["03", "Implementation", "Months 4–6", "Daily TBT, weekly audits, analysis"], ["04", "Optimization", "Months 7–12", "App/QR, drills, feedback loops"]].map((item) => <div key={item[0]}><b>{item[0]}</b><Mono size={9} color={C.orange}>{item[2]}</Mono><strong>{item[1]}</strong><span>{item[3]}</span></div>)}</div></div>}
       </div>
       <div className="home-footer"><Mono size={9} color={C.green}>● PILOT MODE</Mono><span>Voice, text and historical safety records are connected in this prototype.</span><button onClick={() => onSelect("analyzer")}>START WITH A REPORT →</button></div>
+    </div>
+  );
+}
+
+function ReferenceDashboardHome({ currentUser, onSelect }: { currentUser: UserSession; onSelect(tab: Tab): void }) {
+  const isWorker = currentUser.role === "worker";
+  const isSupervisor = currentUser.role === "supervisor";
+
+  const navItems: { tab: Tab; label: string; icon: string }[] = isWorker
+    ? [
+        { tab: "home", label: "Dashboard", icon: "⌂" },
+        { tab: "worker", label: "AURA Voice", icon: "◌" },
+      ]
+    : isSupervisor
+      ? [
+          { tab: "home", label: "Dashboard", icon: "⌂" },
+          { tab: "alerts", label: "Alerts", icon: "♧" },
+          { tab: "overview", label: "Reports", icon: "▤" },
+          { tab: "desk", label: "Actions", icon: "♙" },
+          { tab: "blueprint", label: "Training", icon: "♢" },
+        ]
+      : [
+          { tab: "home", label: "Dashboard", icon: "⌂" },
+          { tab: "alerts", label: "Incidents & Alerts", icon: "♧" },
+          { tab: "overview", label: "Reports", icon: "▤" },
+          { tab: "overview", label: "Safety Records", icon: "▣" },
+          { tab: "blueprint", label: "Training & Toolbox Talks", icon: "♢" },
+          { tab: "desk", label: "Team", icon: "♙" },
+          { tab: "blueprint", label: "Settings", icon: "⚙" },
+        ];
+
+  const kpis = isWorker
+    ? [
+        { className: "reference-kpi blue", icon: "◉", label: "Audio Reports", value: "03", meta: "today" },
+        { className: "reference-kpi green", icon: "✓", label: "Action Clear", value: "01", meta: "awaiting check" },
+        { className: "reference-kpi amber", icon: "⚠", label: "Current Risk", value: "94", meta: "AURA score" },
+      ]
+    : isSupervisor
+      ? [
+          { className: "reference-kpi red", icon: "!", label: "Open Alerts", value: "03", meta: "needs review" },
+          { className: "reference-kpi blue", icon: "✚", label: "Reports", value: "12", meta: "new this shift" },
+          { className: "reference-kpi green", icon: "✓", label: "Actions Closed", value: "28", meta: "last 7 days" },
+          { className: "reference-kpi purple", icon: "♙", label: "Teams Ready", value: "05", meta: "active crews" },
+        ]
+      : [
+          { className: "reference-kpi red", icon: "!", label: "Critical Incidents", value: "3", meta: "↑ 2" },
+          { className: "reference-kpi blue", icon: "✚", label: "Total Incidents", value: "12", meta: "↓ 4" },
+          { className: "reference-kpi green", icon: "✓", label: "Actions Closed", value: "28", meta: "↑ 6" },
+          { className: "reference-kpi purple", icon: "♙", label: "Workers Safe", value: "245", meta: "on duty" },
+          { className: "reference-kpi amber", icon: "⬟", label: "High Risk Sites", value: "1", meta: "↓ 1" },
+        ];
+
+  const quickActions = isWorker
+    ? [
+        { label: "Open AURA", onClick: () => onSelect("worker"), icon: "◌" },
+        { label: "Hear guidance", onClick: () => onSelect("worker"), icon: "♫" },
+      ]
+    : isSupervisor
+      ? [
+          { label: "Review reports", onClick: () => onSelect("overview"), icon: "▤" },
+          { label: "Escalate actions", onClick: () => onSelect("desk"), icon: "♙" },
+          { label: "Check alerts", onClick: () => onSelect("alerts"), icon: "♧" },
+        ]
+      : [
+          { label: "Report Incident", onClick: () => onSelect("analyzer"), icon: "♩" },
+          { label: "Safety Records", onClick: () => onSelect("overview"), icon: "◉" },
+          { label: "Send Alert", onClick: () => onSelect("desk"), icon: "♙" },
+          { label: "Toolbox Talk", onClick: () => onSelect("blueprint"), icon: "▰" },
+        ];
+  return (
+    <div className="reference-dashboard">
+      <aside className="reference-sidebar">
+        <div className="reference-brand"><span className="reference-brand__mark">✦</span><span><strong>SIF</strong><small>Serious Injury &<br />Fatality Intelligence</small></span></div>
+        <nav className="reference-nav">
+          {navItems.map((item, index) => <button key={`${item.label}-${index}`} className={index === 0 ? "is-active" : ""} onClick={() => onSelect(item.tab)}><i>{item.icon}</i><span>{item.label}</span>{item.label === "Incidents & Alerts" && <b>3</b>}</button>)}
+        </nav>
+        <button className="reference-aura" onClick={() => onSelect("worker")}><strong>◉ AURA</strong><span>Voice. Safety. Action.</span></button>
+        <div className="reference-sidebar-note">Detect risk before it<br />becomes fatal.<i /></div>
+      </aside>
+      <main className="reference-main">
+        <header className="reference-topbar"><div className="reference-search">⌕ <span>Search by site, worker, incident, or keyword...</span></div><div className="reference-user-tools"><button className="reference-bell">♧<b>3</b></button><span className="reference-avatar">SK</span><div><strong>Suresh</strong><small>Safety Officer</small></div><span className="reference-chevron">⌄</span></div></header>
+        <div className="reference-content">
+          <div className="reference-welcome"><div className="reference-sun">☀</div><div><h1>{isWorker ? `AURA Ready, ${currentUser.name.split(" ")[0]}` : isSupervisor ? `Supervisor Desk, ${currentUser.name.split(" ")[0]}` : `Good Morning, ${currentUser.name.split(" ")[0]}`}</h1><p>{isWorker ? "Your audio report is live and matched to field risk before work continues." : isSupervisor ? "Review reports, assign actions, and close the loop with crews." : "Here's what's happening at your sites today."}</p></div><div className="reference-filters"><button>▣ <strong>04 Jul 2026</strong><small>10:24 AM</small></button><button>● <strong>{currentUser.department}</strong><span>⌄</span></button></div></div>
+          <div className="reference-kpis">{kpis.map((kpi) => <div key={kpi.label} className={kpi.className}><i>{kpi.icon}</i><span>{kpi.label}</span><strong>{kpi.value} <small>{kpi.meta}</small></strong><em>{kpi.meta}</em></div>)}</div>
+          <div className="reference-grid reference-grid--top">
+            <section className="reference-card reference-critical"><div className="reference-card-head"><span className="reference-pill reference-pill--red">▲ CRITICAL</span><time>10:18 AM</time></div><h2>Pressure Deviation + H2S Exposure</h2><div className="reference-tags"><span>⌖ Site: WH-14</span><span>♙ Worker ID: W-032</span><span>▣ Device: AURA-17</span><span>⌖ Casing Line - Platform</span></div><div className="reference-quote">“AURA, platform hil raha hai aur casing line ke paas pressure badh raha hai. H2S smell bhi aa rahi hai.”<small>(Hindi)</small></div><div className="reference-critical-foot"><button onClick={() => onSelect("alerts")}>View Details <b>→</b></button><button onClick={() => onSelect("worker")}>▶ &nbsp;Play Audio</button><button onClick={() => onSelect("overview")}>▤ &nbsp;View Records</button></div><div className="reference-score"><strong>94</strong><span>Risk Score</span><b>Critical</b></div></section>
+            <section className="reference-card reference-map-card"><div className="reference-card-head"><h2>⌖ &nbsp;Site Risk Overview</h2><button>Last 7 Days　⌄</button></div><div className="reference-map"><span className="map-pin map-pin--red">!</span><label className="map-label map-label--red">WH-14</label><span className="map-pin map-pin--amber">!</span><label className="map-label map-label--amber">WH-07</label><span className="map-pin map-pin--green">●</span><label className="map-label map-label--green">WH-03</label></div><div className="reference-legend"><span><i className="red-dot" />Critical</span><span><i className="amber-dot" />High</span><span><i className="yellow-dot" />Medium</span><span><i className="green-dot" />Low</span></div></section>
+            <section className="reference-card reference-activity"><div className="reference-card-head"><h2>◷ &nbsp;Recent Activity</h2><button>View All →</button></div>{[["!", "New voice report received", "WH-14 · 10:18 AM", "Critical", "red"], ["✓", "Action closed", "Gas test completed — WH-07", "09:42 AM", "green"], ["♙", "Training update", "Toolbox Talk completed — Crew B", "08:30 AM", "blue"], ["▲", "Inspection finding", "PPE violation — Platform A", "07:50 AM", "amber"], ["✓", "Incident resolved", "Near miss — WH-03", "06:15 AM", "green"]].map((item) => <div className="activity-row" key={item[1]}><i className={item[4]}>{item[0]}</i><span><strong>{item[1]}</strong><small>{item[2]}</small></span><b className={item[4]}>{item[3]}</b></div>)}</section>
+          </div>
+          <div className="reference-grid reference-grid--bottom">
+            <section className="reference-card reference-trend"><div className="reference-card-head"><h2>▥ &nbsp;Risk Trend</h2><button>Last 7 Days　⌄</button></div><div className="trend-chart"><div className="trend-line" /><div className="trend-point p1" /><div className="trend-point p2" /><div className="trend-point p3" /><div className="trend-point p4" /><div className="trend-point p5" /><div className="trend-point p6" /><div className="trend-point p7" /><span className="trend-value">94<br /><small>(04 Jul)</small></span><div className="trend-days"><span>28 Jun</span><span>29 Jun</span><span>30 Jun</span><span>01 Jul</span><span>02 Jul</span><span>03 Jul</span><span>04 Jul</span></div></div></section>
+            <section className="reference-card reference-hazards"><div className="reference-card-head"><h2>▲ &nbsp;Top Hazards Detected</h2></div><div className="hazard-body"><div className="hazard-donut"><strong>18</strong><span>Total</span></div><div className="hazard-list"><span><i className="red-dot" />H2S / Gas <b>33%</b></span><span><i className="amber-dot" />Pressure <b>22%</b></span><span><i className="yellow-dot" />Fall / Height <b>17%</b></span><span><i className="blue-dot" />PPE Violation <b>11%</b></span><span><i className="purple-dot" />Heat / Fatigue <b>6%</b></span><span><i className="gray-dot" />Others <b>11%</b></span></div></div></section>
+            <section className="reference-card reference-team"><div className="reference-card-head"><h2>♟ &nbsp;Team Roles</h2><button>View Team →</button></div>{[["SK", "Suresh", "Safety Officer / Operations Desk"], ["DV", "Divya", "Site Supervisor"], ["DP", "Darshna", "Field Relay"], ["SN", "Saniva", "Worker Relay"], ["👷", "Worker / Ground Crew", "Field Worker"]].map((item, i) => <div className="team-row" key={item[1]}><i className={`team-avatar team-avatar--${i}`}>{item[0]}</i><span><strong>{item[1]}</strong><small>{item[2]}</small></span><b>● {i === 4 ? "On Site" : "Online"}</b></div>)}</section>
+          </div>
+          <section className="reference-card reference-quick"><div className="reference-card-head"><h2>ϟ &nbsp;Quick Actions</h2></div><div className="quick-actions">{quickActions.map((action) => <button key={action.label} onClick={action.onClick}><i className={isWorker ? "blue" : isSupervisor ? "purple" : "green"}>{action.icon}</i><span>{action.label}<br /><small>{isWorker ? "voice" : isSupervisor ? "operational" : "dashboard"}</small></span></button>)}</div></section>
+        </div>
+      </main>
     </div>
   );
 }
@@ -1221,28 +1438,151 @@ function TabBar({ active, onSelect }: { active: Tab; onSelect(t: Tab): void }) {
   );
 }
 
+function ReferenceSidebar({ currentUser, active, onSelect }: { currentUser: UserSession; active: Tab; onSelect(tab: Tab): void }) {
+  const navItems: { tab: Tab; label: string; icon: string }[] = currentUser.role === "worker"
+    ? [
+        { tab: "home", label: "Dashboard", icon: "⌂" },
+        { tab: "worker", label: "AURA Voice", icon: "◌" },
+      ]
+    : currentUser.role === "supervisor"
+      ? [
+          { tab: "home", label: "Dashboard", icon: "⌂" },
+          { tab: "alerts", label: "Alerts", icon: "♧" },
+          { tab: "overview", label: "Reports", icon: "▤" },
+          { tab: "desk", label: "Actions", icon: "♙" },
+          { tab: "blueprint", label: "Training", icon: "♢" },
+        ]
+      : [
+          { tab: "home", label: "Dashboard", icon: "⌂" },
+          { tab: "alerts", label: "Incidents & Alerts", icon: "♧" },
+          { tab: "overview", label: "Reports", icon: "▤" },
+          { tab: "overview", label: "Safety Records", icon: "▣" },
+          { tab: "blueprint", label: "Training & Toolbox Talks", icon: "♢" },
+          { tab: "desk", label: "Team", icon: "♙" },
+          { tab: "blueprint", label: "Settings", icon: "⚙" },
+        ];
+
+  return <aside className="reference-sidebar"><button className="reference-brand reference-brand-button" onClick={() => onSelect("home")}><span className="reference-brand__mark">✦</span><span><strong>SIF</strong><small>Serious Injury &<br />Fatality Intelligence</small></span></button><nav className="reference-nav">{navItems.map((item, index) => <button key={`${item.label}-${index}`} className={active === item.tab ? "is-active" : ""} onClick={() => onSelect(item.tab)}><i>{item.icon}</i><span>{item.label}</span>{item.label === "Incidents & Alerts" && <b>3</b>}</button>)}</nav>{currentUser.role !== "worker" && <button className="reference-aura" onClick={() => onSelect("worker")}><strong>◉ AURA</strong><span>Voice. Safety. Action.</span></button>}{currentUser.role === "worker" && <button className="reference-aura" onClick={() => onSelect("worker")}><strong>◉ AURA</strong><span>Field report access</span></button>}<div className="reference-sidebar-note">Detect risk before it<br />becomes fatal.<i /></div></aside>;
+}
+
+function ReferenceTopbar({ currentUser, onExportCsv, onLogout }: { currentUser: UserSession | null; onExportCsv(): void; onLogout(): void }) {
+  const initials = (currentUser?.name ?? "User").split(" ").slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+  const [profileOpen, setProfileOpen] = useState(false);
+  return (
+    <header className="reference-topbar">
+      <div className="reference-search">⌕ <span>Search by site, worker, incident, or keyword...</span></div>
+      <div className="reference-user-tools">
+        <button className="reference-bell" onClick={onExportCsv}>⬇<b>CSV</b></button>
+        <div style={{ position: "relative" }}>
+          <button
+            type="button"
+            aria-expanded={profileOpen}
+            aria-label="Open profile menu"
+            onClick={() => setProfileOpen((open) => !open)}
+            style={{ display: "flex", alignItems: "center", gap: 9, padding: 0, border: 0, background: "transparent", color: C.text, cursor: "pointer", textAlign: "left" }}
+          >
+            <span className="reference-avatar">{initials}</span>
+            <span style={{ display: "flex", flexDirection: "column" }}>
+              <strong>{currentUser?.name ?? "User"}</strong>
+              <small>{currentUser?.role ? `${currentUser.role[0].toUpperCase()}${currentUser.role.slice(1)}` : "User"}</small>
+            </span>
+            <span className="reference-chevron">⌄</span>
+          </button>
+          {profileOpen && <div role="menu" style={{ position: "absolute", top: "calc(100% + 12px)", right: 0, zIndex: 30, width: 230, padding: 14, border: `1px solid ${C.border2}`, background: "#FFFFFF", boxShadow: "0 18px 36px rgba(24,52,59,0.16)" }}>
+            <Mono size={9} color={C.muted}>SIGNED IN PROFILE</Mono>
+            <div style={{ marginTop: 8, color: C.text, fontWeight: 700 }}>{currentUser?.name}</div>
+            <div style={{ marginTop: 3, color: C.dim, fontSize: 11 }}>{currentUser?.department}</div>
+            <div style={{ marginTop: 3, color: C.muted, fontSize: 10 }}>ID: {currentUser?.employeeId}</div>
+            <button type="button" role="menuitem" onClick={onLogout} style={{ width: "100%", marginTop: 14, padding: "9px 10px", border: `1px solid ${C.red}55`, background: `${C.red}0C`, color: C.red, cursor: "pointer", font: "9px 'IBM Plex Mono', monospace", letterSpacing: "0.12em", textTransform: "uppercase" }}>
+              ⇥ Logout
+            </button>
+          </div>}
+        </div>
+      </div>
+    </header>
+  );
+}
+
 // ─── App root ─────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [voiceAlert, setVoiceAlert] = useState<VoiceMatch | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
+
+  const canAccessTab = (target: Tab) => {
+    if (!currentUser) return false;
+    if (currentUser.role === "worker") return ["home", "worker"].includes(target);
+    if (currentUser.role === "supervisor") return ["home", "analyzer", "overview", "alerts", "desk", "blueprint"].includes(target);
+    return true;
+  };
+
+  const handleSelectTab = (nextTab: Tab) => {
+    if (canAccessTab(nextTab)) {
+      setTab(nextTab);
+    }
+  };
+
+  const handleSaveRecord = (record: Omit<SafetyRecord, "id" | "createdAt">) => {
+    const nextRecord = {
+      ...record,
+      id: `record-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    };
+    saveSafetyRecord(nextRecord);
+    if (currentUser) {
+      const stored = JSON.parse(localStorage.getItem(RECORDS_KEY) ?? "[]") as SafetyRecord[];
+      const userCsv = [
+        ["id", "createdAt", "userName", "employeeId", "department", "role", "source", "transcript", "hazard", "risk", "action"],
+        ...stored.filter((item) => item.employeeId === currentUser.employeeId).map((item) => [item.id, item.createdAt, item.userName, item.employeeId, item.department, item.role, item.source, item.transcript, item.hazard, item.risk, item.action]),
+      ]
+        .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, '""')}"`).join(","))
+        .join("\n");
+      localStorage.setItem(`sif-user-${currentUser.employeeId.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.csv`, userCsv);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem(ACTIVE_USER_KEY);
+    setCurrentUser(null);
+    setVoiceAlert(null);
+    setTab("home");
+  };
+
+  useEffect(() => {
+    const stored = localStorage.getItem(ACTIVE_USER_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored) as UserSession & { sessionId?: string };
+        if (parsed?.employeeId && (parsed.role !== "admin" || parsed.email === "sureshcit@gmail.com")) {
+          setCurrentUser({
+            name: parsed.name,
+            employeeId: parsed.employeeId,
+            department: parsed.department,
+            role: parsed.role,
+            email: parsed.email,
+          });
+          setTab(parsed.role === "worker" ? "worker" : "home");
+        }
+      } catch (error) {
+        console.error("Failed to hydrate user session", error);
+      }
+    }
+  }, []);
+
+  if (!currentUser) {
+    return <LoginScreen onLogin={(user) => {
+      const sessionId = appendUserSessionLog(user);
+      setCurrentUser({ ...user, sessionId });
+      setTab(user.role === "worker" ? "worker" : "home");
+    }} />;
+  }
+
+  const screen = <>{currentUser.role !== "worker" && tab !== "worker" && tab !== "blueprint" && <VoiceSignalPanel onAlert={setVoiceAlert} />}<div className="app-content-stage">{tab === "analyzer" && currentUser.role !== "worker" && <IncidentAnalyzer user={currentUser} onSave={handleSaveRecord} />}{tab === "overview" && <NetworkOverview />}{tab === "alerts" && <AlertsFeed />}{tab === "worker" && <WorkerDevice onAlert={setVoiceAlert} />}{tab === "desk" && <OperationsDesk voiceAlert={voiceAlert} />}{tab === "blueprint" && <BlueprintView />}{tab === "home" && <ReferenceDashboardHome currentUser={currentUser} onSelect={handleSelectTab} />}</div></>;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.base, color: C.text }}>
-      <Header />
-      <div className="app-content-scroll">
-        {tab !== "worker" && tab !== "home" && tab !== "blueprint" && <VoiceSignalPanel onAlert={setVoiceAlert} />}
-        <div className="app-content-stage">
-          {tab === "home"     && <DashboardHome onSelect={setTab} />}
-          {tab === "analyzer" && <IncidentAnalyzer />}
-          {tab === "overview" && <NetworkOverview />}
-          {tab === "alerts"   && <AlertsFeed />}
-          {tab === "worker"   && <WorkerDevice onAlert={setVoiceAlert} />}
-          {tab === "desk"     && <OperationsDesk voiceAlert={voiceAlert} />}
-          {tab === "blueprint" && <BlueprintView />}
-        </div>
-      </div>
-      <TabBar active={tab} onSelect={setTab} />
+    <div style={{ height: "100%", background: C.base, color: C.text }}>
+      {tab === "home" ? <ReferenceDashboardHome currentUser={currentUser} onSelect={handleSelectTab} /> : <div className="reference-dashboard reference-internal"><ReferenceSidebar currentUser={currentUser} active={tab} onSelect={handleSelectTab} /><main className="reference-main"><ReferenceTopbar currentUser={currentUser} onExportCsv={() => exportUserCsv(currentUser)} onLogout={handleLogout} /><div className="app-content-scroll">{screen}</div></main></div>}
       {voiceAlert && (
         <div className="voice-alert" role="alert">
           <div className="worker-toast__icon">!</div>
